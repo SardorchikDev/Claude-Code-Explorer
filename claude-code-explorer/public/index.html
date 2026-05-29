@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Source Explorer</title>
+<style>
+/* ── Reset & Base ── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#1e1e2e; --bg2:#252536; --bg3:#2d2d44; --bg4:#363650;
+  --fg:#cdd6f4; --fg2:#a6adc8; --fg3:#6c7086;
+  --accent:#89b4fa; --accent2:#74c7ec; --green:#a6e3a1; --red:#f38ba8;
+  --orange:#fab387; --yellow:#f9e2af; --purple:#cba6f7;
+  --border:#45475a; --line:#313244;
+  --font:'Cascadia Code','Fira Code','JetBrains Mono','Consolas',monospace;
+  --font-ui:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --sidebar-w:300px; --header-h:48px; --tab-h:36px;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-track{background:var(--bg2)}
+*::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+*::-webkit-scrollbar-thumb:hover{background:var(--fg3)}
+
+/* ── Header ── */
+.header{height:var(--header-h);background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0}
+.header h1{font-size:15px;font-weight:600;color:var(--accent);white-space:nowrap}
+.header .subtitle{font-size:12px;color:var(--fg3);margin-left:auto;white-space:nowrap}
+.header .subtitle span{color:var(--fg2)}
+.search-box{position:relative;flex:1;max-width:480px}
+.search-box input{width:100%;height:30px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--fg);padding:0 12px 0 32px;font-size:13px;outline:none;transition:border .2s;font-family:var(--font-ui)}
+.search-box input:focus{border-color:var(--accent);background:var(--bg4)}
+.search-box .icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--fg3);font-size:14px}
+.search-box .kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:var(--bg4);color:var(--fg3);font-size:10px;padding:2px 5px;border-radius:3px;border:1px solid var(--border)}
+
+/* ── Tabs ── */
+.tab-bar{height:var(--tab-h);background:var(--bg);display:flex;align-items:center;padding:0 12px;gap:2px;border-bottom:1px solid var(--border);flex-shrink:0}
+.tab{padding:6px 14px;font-size:12px;color:var(--fg3);cursor:pointer;border-radius:4px 4px 0 0;transition:all .15s;user-select:none;border:1px solid transparent;border-bottom:none;position:relative}
+.tab:hover{color:var(--fg2);background:var(--bg3)}
+.tab.active{color:var(--fg);background:var(--bg2);border-color:var(--border)}
+.tab.active::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:1px;background:var(--bg2)}
+
+/* ── Main Layout ── */
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:var(--sidebar-w);background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.panel{display:none;flex:1;overflow:hidden;flex-direction:column}
+.panel.active{display:flex}
+
+/* ── Sidebar ── */
+.sidebar-header{padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--fg3);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.sidebar-header .count{font-size:10px;color:var(--fg3);background:var(--bg3);padding:2px 6px;border-radius:8px}
+.sidebar-body{flex:1;overflow-y:auto;padding:4px 0}
+.tree-toggle{cursor:pointer;user-select:none}
+
+/* ── Tree ── */
+.tree-node{padding-left:0}
+.tree-row{display:flex;align-items:center;padding:3px 10px;font-size:13px;cursor:pointer;border-left:3px solid transparent;transition:all .1s;gap:4px}
+.tree-row:hover{background:var(--bg3)}
+.tree-row.selected{background:var(--bg4);border-left-color:var(--accent);color:var(--fg)}
+.tree-row .icon{width:16px;text-align:center;flex-shrink:0;font-size:12px}
+.tree-row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font);font-size:12px}
+.tree-row .chevron{width:12px;flex-shrink:0;transition:transform .15s;color:var(--fg3);font-size:10px}
+.tree-row .chevron.open{transform:rotate(90deg)}
+.tree-children{display:none}
+.tree-children.open{display:block}
+.tree-row.file{padding-left:25px}
+.dir-icon{color:var(--accent2)}
+.file-icon{color:var(--fg3)}
+.file-icon.ts{color:var(--accent)}
+.file-icon.tsx{color:var(--green)}
+.file-icon.js{color:var(--yellow)}
+.file-icon.json{color:var(--orange)}
+
+/* ── Code Viewer ── */
+.code-viewer{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.code-header{height:36px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;font-size:12px;font-family:var(--font);color:var(--fg2);gap:8px}
+.code-header .file-path{color:var(--accent)}
+.code-header .file-size{color:var(--fg3);margin-left:auto}
+.code-body{flex:1;overflow:auto;position:relative;background:var(--bg)}
+.code-body .empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--fg3);flex-direction:column;gap:8px}
+.code-body .empty .big-icon{font-size:48px;opacity:.3}
+.code-body .empty p{font-size:14px}
+.code-body .empty .hint{font-size:12px;color:var(--fg3)}
+pre.code-content{margin:0;padding:0;min-width:fit-content;display:table;width:100%;font-family:var(--font);font-size:13px;line-height:1.6;tab-size:2}
+.code-line{display:flex;width:100%;min-height:21px}
+.code-line:hover{background:var(--line)}
+.code-line .ln{width:52px;flex-shrink:0;text-align:right;padding-right:14px;color:var(--fg3);user-select:none;font-size:12px;border-right:1px solid var(--border);margin-right:12px}
+.code-line .ln.highlight-line{color:var(--accent);border-right-color:var(--accent)}
+.code-line .text{padding-right:24px;white-space:pre;tab-size:2}
+
+/* ── Syntax Highlighting ── */
+.hl-kw{color:var(--purple)} .hl-str{color:var(--green)} .hl-num{color:var(--orange)}
+.hl-cmt{color:var(--fg3);font-style:italic} .hl-fn{color:var(--accent)}
+.hl-type{color:var(--yellow)} .hl-op{color:var(--fg2)} .hl-prop{color:var(--fg)}
+.hl-import{color:var(--accent2)} .hl-mod{color:var(--purple)}
+.hl-tag{color:var(--orange)} .hl-attr{color:var(--accent2)}
+.hl-template{color:var(--orange)} .hl-regex{color:var(--green)}
+.hl-builtin{color:var(--red)} .hl-const{color:var(--accent2)}
+
+/* ── Search Results ── */
+.search-panel{padding:0;display:none;flex:1;overflow:hidden;flex-direction:column}
+.search-panel.active{display:flex}
+.search-header{padding:10px 14px;font-size:12px;color:var(--fg3);border-bottom:1px solid var(--border)}
+.search-results{flex:1;overflow-y:auto}
+.search-item{padding:8px 14px;cursor:pointer;border-bottom:1px solid var(--line);transition:background .1s}
+.search-item:hover{background:var(--bg3)}
+.search-item .path{font-size:11px;color:var(--accent);font-family:var(--font);margin-bottom:3px}
+.search-item .line-num{color:var(--fg3);font-size:11px;margin-left:8px}
+.search-item .snippet{font-family:var(--font);font-size:12px;color:var(--fg2);white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.search-item .snippet em{color:var(--yellow);font-style:normal;background:rgba(249,226,175,.15);padding:0 2px;border-radius:2px}
+.search-empty{padding:40px;text-align:center;color:var(--fg3)}
+
+/* ── Stats Dashboard ── */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;padding:20px;overflow-y:auto}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px;transition:border-color .2s}
+.stat-card:hover{border-color:var(--accent)}
+.stat-card .label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--fg3);margin-bottom:6px}
+.stat-card .value{font-size:28px;font-weight:700;color:var(--fg);font-family:var(--font)}
+.stat-card .value.accent{color:var(--accent)}
+.stat-card .value.green{color:var(--green)}
+.stat-card .value.orange{color:var(--orange)}
+.stat-card .sub{font-size:11px;color:var(--fg3);margin-top:4px}
+
+/* ── Architecture ── */
+.arch-panel{padding:20px;overflow-y:auto}
+.arch-overview{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:18px;font-size:14px;line-height:1.6;color:var(--fg2)}
+.arch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.arch-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;transition:border-color .2s}
+.arch-card:hover{border-color:var(--accent)}
+.arch-card h3{font-size:13px;font-weight:600;color:var(--accent);margin-bottom:4px}
+.arch-card .files{font-family:var(--font);font-size:11px;color:var(--fg3);margin-bottom:6px}
+.arch-card p{font-size:12px;color:var(--fg2);line-height:1.5}
+.tech-table{width:100%;border-collapse:collapse;margin-top:18px;font-size:13px}
+.tech-table th{text-align:left;padding:8px 12px;background:var(--bg3);color:var(--fg3);font-weight:500;border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.tech-table td{padding:8px 12px;border-bottom:1px solid var(--line)}
+.tech-table td:first-child{color:var(--fg3)}
+.tech-table td:last-child{font-family:var(--font);color:var(--accent)}
+
+/* ── Dependencies ── */
+.deps-panel{padding:20px;overflow-y:auto}
+.deps-list{display:flex;flex-direction:column;gap:4px;max-width:500px}
+.dep-row{display:flex;align-items:center;gap:12px;padding:6px 10px;background:var(--bg2);border-radius:6px;font-size:13px;transition:background .1s}
+.dep-row:hover{background:var(--bg3)}
+.dep-row .name{font-family:var(--font);color:var(--accent);flex:1}
+.dep-row .count{color:var(--fg3);font-size:11px;background:var(--bg3);padding:2px 8px;border-radius:10px}
+.dep-row .bar{height:4px;background:var(--bg4);border-radius:2px;flex:0 0 120px}
+.dep-row .bar-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
+
+/* ── Loading ── */
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Responsive ── */
+@media(max-width:768px){
+  .sidebar{width:220px;position:absolute;z-index:10;height:100%;transform:translateX(-100%);transition:transform .2s}
+  .sidebar.open{transform:translateX(0)}
+  .menu-btn{display:block!important}
+  .header h1{font-size:13px}
+  .search-box{max-width:none}
+}
+.menu-btn{display:none;background:none;border:none;color:var(--fg2);font-size:18px;cursor:pointer;padding:4px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+  <h1>✦ Claude Code</h1>
+  <div class="search-box">
+    <span class="icon">🔍</span>
+    <input id="searchInput" type="text" placeholder="Search across all source files…" oninput="onSearchInput(this.value)" onkeydown="if(event.key==='Enter')doSearch(this.value)">
+    <span class="kbd">⌘K</span>
+  </div>
+  <div class="subtitle">
+    Leaked Source <span>·</span> 2026-03-31
+  </div>
+</div>
+
+<div class="tab-bar">
+  <div class="tab active" data-panel="explorer" onclick="switchPanel('explorer',this)">📁 Explorer</div>
+  <div class="tab" data-panel="search" onclick="switchPanel('search',this)">🔎 Search</div>
+  <div class="tab" data-panel="stats" onclick="switchPanel('stats',this)">📊 Stats</div>
+  <div class="tab" data-panel="architecture" onclick="switchPanel('architecture',this)">🏗 Architecture</div>
+  <div class="tab" data-panel="deps" onclick="switchPanel('deps',this)">📦 Dependencies</div>
+</div>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span>Files</span>
+      <span class="count" id="fileCount">—</span>
+    </div>
+    <div class="sidebar-body" id="fileTree">
+      <div style="padding:20px;text-align:center;color:var(--fg3)"><span class="spinner"></span> Loading tree…</div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+    <!-- Explorer panel -->
+    <div class="panel active" id="panel-explorer">
+      <div class="code-viewer">
+        <div class="code-header">
+          <span class="file-path" id="filePath">Select a file from the tree</span>
+          <span class="file-size" id="fileSize"></span>
+        </div>
+        <div class="code-body" id="codeBody">
+          <div class="empty">
+            <div class="big-icon">📄</div>
+            <p>Browse the source tree</p>
+            <span class="hint">Click any file to view its contents</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Search panel -->
+    <div class="search-panel" id="panel-search">
+      <div class="search-header" id="searchHeader">Type a query to search across all files</div>
+      <div class="search-results" id="searchResults">
+        <div class="search-empty">Enter a search term above to find code across the entire codebase</div>
+      </div>
+    </div>
+
+    <!-- Stats panel -->
+    <div class="panel" id="panel-stats">
+      <div class="stats-grid" id="statsGrid">
+        <div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--fg3)"><span class="spinner"></span> Loading stats…</div>
+      </div>
+    </div>
+
+    <!-- Architecture panel -->
+    <div class="panel" id="panel-architecture"></div>
+
+    <!-- Dependencies panel -->
+    <div class="panel" id="panel-deps">
+      <div class="deps-panel" id="depsPanel">
+        <div style="text-align:center;padding:40px;color:var(--fg3)"><span class="spinner"></span> Loading dependencies…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──
+let fileTree = [];
+let currentFile = null;
+let searchTimeout = null;
+let currentResults = [];
+
+// ── Panel switching ──
+function switchPanel(name, btn) {
+  document.querySelectorAll('.panel, .search-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  const panel = document.getElementById('panel-' + name);
+  if (panel) panel.classList.add('active');
+  if (name === 'stats') loadStats();
+  if (name === 'architecture') loadArchitecture();
+  if (name === 'deps') loadDeps();
+  if (name === 'search' && document.getElementById('searchInput').value) {
+    const val = document.getElementById('searchInput').value;
+    if (val.length >= 2) doSearch(val);
+  }
+}
+
+// ── Sidebar toggle (mobile) ──
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+// ── File tree ──
+async function loadTree() {
+  try {
+    const res = await fetch('/api/tree');
+    fileTree = await res.json();
+    renderTree(fileTree);
+    updateFileCount(fileTree);
+  } catch (e) {
+    document.getElementById('fileTree').innerHTML = '<div style="padding:20px;color:var(--red)">Error loading tree</div>';
+  }
+}
+
+function renderTree(nodes, parent, level = 0) {
+  const container = parent || document.getElementById('fileTree');
+  container.innerHTML = '';
+  for (const node of nodes) {
+    const div = createTreeNode(node, level);
+    container.appendChild(div);
+  }
+}
+
+function createTreeNode(node, level = 0) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'tree-node';
+
+  const row = document.createElement('div');
+  row.className = 'tree-row' + (node.type === 'file' ? ' file' : '');
+  row.style.paddingLeft = (10 + level * 16) + 'px';
+
+  const name = document.createElement('span');
+  name.className = 'name';
+
+  if (node.type === 'dir') {
+    const chevron = document.createElement('span');
+    chevron.className = 'chevron';
+    chevron.textContent = '▶';
+    row.appendChild(chevron);
+
+    const icon = document.createElement('span');
+    icon.className = 'icon dir-icon';
+    icon.textContent = '📁';
+    row.appendChild(icon);
+
+    name.textContent = node.name;
+    row.appendChild(name);
+
+    row.dataset.expanded = 'false';
+    row.classList.add('tree-toggle');
+    row.style.cursor = 'pointer';
+
+    const children = document.createElement('div');
+    children.className = 'tree-children';
+
+    for (const child of node.children) {
+      children.appendChild(createTreeNode(child, level + 1));
+    }
+
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = children.classList.toggle('open');
+      chevron.classList.toggle('open', isOpen);
+      row.dataset.expanded = isOpen;
+    });
+
+    wrapper.appendChild(row);
+    wrapper.appendChild(children);
+  } else {
+    const icon = document.createElement('span');
+    icon.className = 'icon file-icon ' + (node.ext ? node.ext.slice(1) : '');
+    icon.textContent = getFileIcon(node.ext);
+    row.appendChild(icon);
+
+    name.textContent = node.name;
+    row.appendChild(name);
+
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openFile(node.path);
+      document.querySelectorAll('.tree-row').forEach(r => r.classList.remove('selected'));
+      row.classList.add('selected');
+      // Mobile: close sidebar
+      document.getElementById('sidebar').classList.remove('open');
+    });
+
+    wrapper.appendChild(row);
+  }
+  return wrapper;
+}
+
+function getFileIcon(ext) {
+  const icons = { '.ts': '📘', '.tsx': '📗', '.js': '📙', '.jsx': '📕', '.json': '📋', '.md': '📝' };
+  return icons[ext] || '📄';
+}
+
+function updateFileCount(nodes) {
+  let count = 0;
+  function walk(n) { for (const node of n) { if (node.type === 'file') count++; if (node.children) walk(node.children); } }
+  walk(nodes);
+  document.getElementById('fileCount').textContent = count;
+}
+
+// ── Code viewer ──
+async function openFile(path, scrollToLine) {
+  currentFile = path;
+  const header = document.getElementById('filePath');
+  const sizeEl = document.getElementById('fileSize');
+  const body = document.getElementById('codeBody');
+
+  header.textContent = path;
+  body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--fg3)"><span class="spinner"></span> Loading…</div>';
+
+  try {
+    const res = await fetch('/api/file?path=' + encodeURIComponent(path));
+    if (!res.ok) throw new Error('Not found');
+    const data = await res.json();
+    sizeEl.textContent = data.lines + ' lines, ' + formatSize(data.content.length);
+
+    // Switch to explorer tab
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelector('[data-panel="explorer"]').classList.add('active');
+    document.querySelectorAll('.panel, .search-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-explorer').classList.add('active');
+
+    renderCode(data.content, path, scrollToLine);
+  } catch (e) {
+    body.innerHTML = '<div class="empty"><div class="big-icon">❌</div><p>Could not load file</p><span class="hint">' + path + '</span></div>';
+    sizeEl.textContent = '';
+  }
+}
+
+function renderCode(content, fileName, scrollToLine) {
+  const body = document.getElementById('codeBody');
+  const lines = content.split('\n');
+  const lang = guessLang(fileName);
+
+  let html = '<pre class="code-content"><code>';
+  for (let i = 0; i < lines.length; i++) {
+    const lineNum = i + 1;
+    const highlighted = highlightLine(lines[i], lang);
+    const hlClass = scrollToLine && Math.abs(lineNum - scrollToLine) <= 2 ? ' highlight-line' : '';
+    html += `<div class="code-line" data-line="${lineNum}"><span class="ln${hlClass}">${lineNum}</span><span class="text">${highlighted}</span></div>`;
+  }
+  html += '</code></pre>';
+  body.innerHTML = html;
+
+  // Scroll to target line
+  if (scrollToLine) {
+    const target = body.querySelector(`[data-line="${scrollToLine}"]`);
+    if (target) {
+      // Scroll so the target line is roughly in the middle
+      const bodyRect = body.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      // We need to wait for render, then estimate position
+      setTimeout(() => {
+        const el = body.querySelector(`[data-line="${scrollToLine}"]`);
+        if (el) {
+          const lineHeight = 21; // matches CSS min-height
+          const targetTop = (scrollToLine - 1) * lineHeight;
+          const viewportHeight = body.clientHeight;
+          body.scrollTop = targetTop - viewportHeight / 3;
+          // Flash highlight
+          el.style.transition = 'background .5s';
+          el.style.background = 'rgba(137,180,250,.12)';
+          setTimeout(() => { el.style.background = ''; }, 1500);
+        }
+      }, 50);
+    }
+  } else {
+    body.scrollTop = 0;
+  }
+}
+
+function guessLang(fileName) {
+  if (fileName.endsWith('.tsx')) return 'tsx';
+  if (fileName.endsWith('.ts')) return 'ts';
+  if (fileName.endsWith('.jsx')) return 'jsx';
+  if (fileName.endsWith('.js')) return 'js';
+  if (fileName.endsWith('.json')) return 'json';
+  if (fileName.endsWith('.md')) return 'md';
+  return 'ts';
+}
+
+// ── Syntax highlighting ──
+function highlightLine(line, lang) {
+  let s = escapeHtml(line);
+
+  // Comments
+  s = s.replace(/(\/\/.*$)/g, '<span class="hl-cmt">$1</span>');
+
+  // JSX tags
+  if (lang === 'tsx' || lang === 'jsx') {
+    s = s.replace(/(&lt;\/?)([\w-.]+)/g, (m, open, tag) => open + '<span class="hl-tag">' + tag + '</span>');
+    s = s.replace(/(\s+)(on\w+|className|style|key|ref|id|src|href|type|name|value|placeholder|disabled|checked|dangerouslySetInnerHTML)(=)/gi, '$1<span class="hl-attr">$2</span>$3');
+    s = s.replace(/(\s+)(className|style|key|ref|id)(=)/gi, '$1<span class="hl-attr">$2</span>$3');
+  }
+
+  // Template strings
+  s = s.replace(/(`)([^`]*)(`)/g, '<span class="hl-template">$1$2$3</span>');
+  s = s.replace(/(\$\{[^}]*\})/g, '<span class="hl-template">$1</span>');
+
+  // Numbers
+  s = s.replace(/\b(\d+\.?\d*)\b/g, '<span class="hl-num">$1</span>');
+
+  // Strings
+  s = s.replace(/('[^']*')/g, '<span class="hl-str">$1</span>');
+  s = s.replace(/("[^"]*")/g, '<span class="hl-str">$1</span>');
+
+  // Keywords
+  const kw = '\\b(import|export|from|const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|throw|try|catch|finally|async|await|yield|typeof|instanceof|class|extends|implements|interface|type|enum|namespace|module|declare|abstract|private|protected|public|static|readonly|get|set|of|in|as|is|satisfies|keyof|typeof|this|super|true|false|null|undefined|void|never|any|unknown|with|default)\\b';
+  s = s.replace(new RegExp(kw, 'g'), '<span class="hl-kw">$1</span>');
+
+  // Import source
+  s = s.replace(/(from\s+)('(?:[^'\\]|\\.)*')/g, '$1<span class="hl-str">$2</span>');
+
+  // Type annotations
+  s = s.replace(/(:\s*)([A-Z]\w*)/g, '$1<span class="hl-type">$2</span>');
+  s = s.replace(/\b([A-Z]\w*)([<(])/g, '<span class="hl-type">$1</span>$2');
+
+  // Function calls
+  s = s.replace(/\b([a-zA-Z_$]\w*)\s*\(/g, '<span class="hl-fn">$1</span>(');
+
+  // Decorators
+  s = s.replace(/(@\w+)/g, '<span class="hl-builtin">$1</span>');
+
+  return s;
+}
+
+// ── Search ──
+function onSearchInput(val) {
+  clearTimeout(searchTimeout);
+  if (val.length < 2) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelector('[data-panel="explorer"]').classList.add('active');
+    document.querySelectorAll('.panel, .search-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-explorer').classList.add('active');
+    return;
+  }
+  searchTimeout = setTimeout(() => doSearch(val), 300);
+}
+
+async function doSearch(query) {
+  // Switch to search tab
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel, .search-panel').forEach(p => p.classList.remove('active'));
+
+  const searchTab = Array.from(document.querySelectorAll('.tab')).find(t => t.dataset.panel === 'search');
+  if (searchTab) searchTab.classList.add('active');
+  document.getElementById('panel-search').classList.add('active');
+
+  const resultsEl = document.getElementById('searchResults');
+  const headerEl = document.getElementById('searchHeader');
+  headerEl.innerHTML = '<span class="spinner"></span> Searching…';
+
+  if (!query || query.length < 2) {
+    resultsEl.innerHTML = '<div class="search-empty">Enter at least 2 characters</div>';
+    headerEl.textContent = 'Type a query to search';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/search?q=' + encodeURIComponent(query));
+    const results = await res.json();
+    currentResults = results;
+
+    headerEl.textContent = results.length + ' results for "' + query + '"';
+    if (results.length === 0) {
+      resultsEl.innerHTML = '<div class="search-empty">No results found for "' + query + '"</div>';
+      return;
+    }
+
+    let html = '';
+    for (const r of results) {
+      const text = escapeHtml(r.text);
+      const highlighted = text.replace(new RegExp(escapeRegex(query), 'gi'), m => '<em>' + m + '</em>');
+      html += `<div class="search-item" onclick="openFile('${r.path.replace(/'/g, "\\'")}', ${r.line})">
+        <div class="path">${r.path}<span class="line-num">:${r.line}</span></div>
+        <div class="snippet">${highlighted}</div>
+      </div>`;
+    }
+    resultsEl.innerHTML = html;
+  } catch (e) {
+    headerEl.textContent = 'Search failed';
+    resultsEl.innerHTML = '<div class="search-empty">Error searching</div>';
+  }
+}
+
+// ── Stats ──
+async function loadStats() {
+  const grid = document.getElementById('statsGrid');
+  try {
+    const res = await fetch('/api/stats');
+    const stats = await res.json();
+
+    const dirNames = Object.keys(stats.dirCounts).filter(k => k !== 'undefined').sort((a,b) => (stats.dirCounts[b]||0)-(stats.dirCounts[a]||0));
+    const topDirs = dirNames.slice(0, 8);
+
+    grid.innerHTML = `
+      <div class="stat-card"><div class="label">Total Files</div><div class="value accent">${stats.totalFiles.toLocaleString()}</div><div class="sub">.ts / .tsx / .js</div></div>
+      <div class="stat-card"><div class="label">Total Lines</div><div class="value green">${stats.totalLines.toLocaleString()}</div><div class="sub">across all source files</div></div>
+      <div class="stat-card"><div class="label">Total Size</div><div class="value orange">${formatSize(stats.totalSize)}</div><div class="sub">source code</div></div>
+      <div class="stat-card"><div class="label">.ts files</div><div class="value">${stats.extCounts['.ts'] || 0}</div><div class="sub">${stats.extCounts['.tsx'] || 0} .tsx files · ${stats.extCounts['.js'] || 0} .js files</div></div>
+      ${topDirs.map(d => `<div class="stat-card"><div class="label">${d}/</div><div class="value" style="font-size:20px">${stats.dirCounts[d]}</div><div class="sub">files</div></div>`).join('')}
+    `;
+  } catch (e) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--red)">Error loading stats</div>';
+  }
+}
+
+// ── Architecture ──
+async function loadArchitecture() {
+  const panel = document.getElementById('panel-architecture');
+  try {
+    const res = await fetch('/api/architecture');
+    const arch = await res.json();
+
+    let html = '<div class="arch-panel">';
+    html += `<div class="arch-overview">${arch.overview}</div>`;
+    html += '<div class="arch-grid">';
+    for (const layer of arch.layers) {
+      html += `<div class="arch-card">
+        <h3>${layer.name}</h3>
+        <div class="files">${layer.files.join(' · ')}</div>
+        <p>${layer.desc}</p>
+      </div>`;
+    }
+    html += '</div>';
+
+    html += '<h3 style="margin-top:20px;margin-bottom:10px;font-size:14px;color:var(--fg2)">Technology Stack</h3>';
+    html += '<table class="tech-table"><thead><tr><th>Category</th><th>Technology</th></tr></thead><tbody>';
+    for (const t of arch.techStack) {
+      html += `<tr><td>${t.category}</td><td>${t.tech}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    html += '</div>';
+    panel.innerHTML = html;
+  } catch (e) {
+    panel.innerHTML = '<div style="padding:40px;text-align:center;color:var(--red)">Error loading architecture</div>';
+  }
+}
+
+// ── Dependencies ──
+async function loadDeps() {
+  const panel = document.getElementById('depsPanel');
+  try {
+    const res = await fetch('/api/deps');
+    const deps = await res.json();
+    const maxCount = deps[0]?.count || 1;
+
+    let html = '<h3 style="margin-bottom:12px;font-size:13px;color:var(--fg2)">' + deps.length + ' external packages (sorted by usage)</h3>';
+    html += '<div class="deps-list">';
+    for (const d of deps) {
+      const pct = (d.count / maxCount * 100).toFixed(0);
+      html += `<div class="dep-row">
+        <span class="name">${d.pkg}</span>
+        <span class="count">${d.count}x</span>
+        <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    }
+    html += '</div>';
+    panel.innerHTML = html;
+  } catch (e) {
+    panel.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red)">Error loading dependencies</div>';
+  }
+}
+
+// ── Keyboard shortcuts ──
+document.addEventListener('keydown', (e) => {
+  // Ctrl+K / Cmd+K → focus search
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    document.getElementById('searchInput').focus();
+  }
+  // Escape → blur search
+  if (e.key === 'Escape') {
+    document.getElementById('searchInput').blur();
+  }
+});
+
+// ── Utilities ──
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+}
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/(1024*1024)).toFixed(1) + ' MB';
+}
+function formatNumber(n) {
+  return n.toLocaleString();
+}
+
+// ── Init ──
+loadTree();
+</script>
+</body>
+</html>
